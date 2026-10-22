@@ -7,7 +7,7 @@ result = graph.invoke(
             {
                 "role": "user",
                 "content": (
-                    "Tengo 23 acciones que valen 182.40 euros. "
+                    "Tengo 73 acciones a 181.4 euros cada una. Su precio sube un 15%. "
                     "¿Cuánto vale mi posición?"
                 )
             }

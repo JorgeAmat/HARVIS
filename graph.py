@@ -2,6 +2,9 @@
 # IMPORTS
 # ============================================================
 
+import ast
+import math
+
 from typing import Annotated, TypedDict
 
 from dotenv import load_dotenv
@@ -45,42 +48,69 @@ class AgentState(TypedDict):
 # 2. TOOLS
 # ============================================================
 
+def evaluate_expression(expression: str) -> float:
+    """Evaluate only bounded numeric arithmetic; never execute Python code."""
+    if not expression.strip() or len(expression) > 500:
+        raise ValueError("Use a non-empty expression of at most 500 characters.")
+    try:
+        tree = ast.parse(expression.strip(), mode="eval")
+    except (SyntaxError, ValueError, RecursionError) as exc:
+        raise ValueError("Invalid arithmetic expression.") from exc
+    if sum(1 for _ in ast.walk(tree)) > 100:
+        raise ValueError("Expression is too complex (maximum 100 syntax nodes).")
+
+    def evaluate(node: ast.AST) -> float:
+        if isinstance(node, ast.Constant) and type(node.value) in (int, float):
+            if abs(node.value) > 1e100:
+                raise ValueError("Numbers must be at most 1e100 in magnitude.")
+            result = float(node.value)
+        elif isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            value = evaluate(node.operand)
+            result = value if isinstance(node.op, ast.UAdd) else -value
+        elif isinstance(node, ast.BinOp) and isinstance(
+            node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div)
+        ):
+            left, right = evaluate(node.left), evaluate(node.right)
+            if isinstance(node.op, ast.Add):
+                result = left + right
+            elif isinstance(node.op, ast.Sub):
+                result = left - right
+            elif isinstance(node.op, ast.Mult):
+                result = left * right
+            else:
+                if right == 0:
+                    raise ValueError("Division by zero is not allowed.")
+                result = left / right
+        else:
+            raise ValueError("Only numbers, parentheses, +, -, *, and / are allowed.")
+
+        # Check every intermediate value, not just the final answer.
+        if not math.isfinite(result) or abs(result) > 1e100:
+            raise ValueError("Numbers and results must be finite and at most 1e100 in magnitude.")
+        return result
+
+    return evaluate(tree.body)
+
+
 @tool
-def calculator(a: float, b: float, operation: str) -> float:
+def calculate(expression: str) -> str:
+    """Calculate a full arithmetic expression using numbers, parentheses, +, -, *, /.
+
+    Include ALL arithmetic, including percentage conversions: for a 15 percent
+    increase use 73 * (181.4 * (1 + 15 / 100)). No names, calls, powers or %.
+    Returns the numeric result as text, or an explicit Error message.
     """
-    Performs a mathematical operation between two numbers.
-
-    operation must be:
-    add, subtract, multiply or divide.
-    """
-
-    print(
-        f"[TOOL calculator] "
-        f"a={a}, b={b}, operation={operation}"
-    )
-
-    if operation == "add":
-        return a + b
-
-    if operation == "subtract":
-        return a - b
-
-    if operation == "multiply":
-        return a * b
-
-    if operation == "divide":
-        return a / b
-
-    raise ValueError(
-        f"Unknown operation: {operation}"
-    )
+    try:
+        return str(evaluate_expression(expression))
+    except ValueError as exc:
+        return f"Error: {exc}"
 
 
 # Esta será la lista de capacidades disponibles para HARVIS.
 #
 # De momento solo tiene UNA.
 tools = [
-    calculator
+    calculate
 ]
 
 
@@ -98,7 +128,7 @@ model = ChatGroq(
 #
 # Simplemente informa al LLM:
 #
-# "Existe calculator y puedes solicitar que se ejecute."
+# "Existe calculate y puedes solicitar que se ejecute."
 model_with_tools = model.bind_tools(
     tools
 )
@@ -108,6 +138,7 @@ model_with_tools = model.bind_tools(
 # 4. PERSONALITY / SYSTEM PROMPT
 # ============================================================
 
+
 SYSTEM_PROMPT = """
 You are HARVIS, Jorge's personal AI assistant.
 
@@ -115,6 +146,15 @@ Your goal is to help Jorge think, organize information,
 understand things and carry out useful tasks.
 
 You can use the tools available to you when necessary.
+
+IMPORTANT TOOL RULE:
+Whenever a request requires arithmetic, you MUST use the
+calculate tool with the COMPLETE expression. Never perform any arithmetic
+mentally, including intermediate steps or percentage conversions. For example,
+for 73 units at 181.4 with a 15 percent increase, send
+73 * (181.4 * (1 + 15 / 100)), not a mentally simplified expression.
+Use the tool result to answer. If it returns an error, correct the expression
+or explain the error; never invent a result.
 
 Be concise and clear.
 
@@ -140,7 +180,7 @@ def agent_node(state: AgentState):
     #
     # SYSTEM: Eres HARVIS...
     # USER: ¿Cuánto es 23 * 8?
-    # AI: quiero usar calculator...
+    # AI: quiero usar calculate...
     # TOOL: 184
     #
     response = model_with_tools.invoke(
@@ -149,6 +189,16 @@ def agent_node(state: AgentState):
             *state["messages"]
         ]
     )
+    if response.tool_calls:
+        print("\n[AGENT] Ha solicitado tools:")
+
+        for tool_call in response.tool_calls:
+            print(
+                f"  -> {tool_call['name']} "
+                f"{tool_call['args']}"
+            )
+    else:
+        print("\n[AGENT] No ha solicitado ninguna tool")
 
     # add_messages añadirá esta respuesta al historial
     return {
