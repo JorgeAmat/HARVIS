@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Secrets
+.env
+
+# Chainlit
+.chainlit/
+
+# Personal HARVIS data
+HARVIS_MEMORY/
+data/
+
+# OS/editor
+.DS_Store
+Thumbs.db
