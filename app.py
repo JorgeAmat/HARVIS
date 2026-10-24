@@ -9,7 +9,7 @@ from graph import graph
 
 @cl.on_chat_start
 async def on_chat_start():
-    # Temporary session context only; nothing is saved to disk.
+    # Session context is temporary; there is no persistent memory.
     cl.user_session.set("messages", [])
     await cl.Message(content="HARVIS v0.1 online.\n\n¿En qué te ayudo?").send()
 
@@ -21,8 +21,7 @@ async def on_message(message: cl.Message):
     tool_calls = {}
     final_message = None
 
-    # Updates contain each completed node's messages, not private model reasoning.
-    # Do not attach the generic model callback: display only selected fields below.
+    # Render completed node updates using only operational fields.
     async for update in graph.astream({"messages": messages}, stream_mode="updates"):
         for node_name, state_update in update.items():
             new_messages = state_update.get("messages", [])
@@ -35,7 +34,7 @@ async def on_message(message: cl.Message):
                             step.output = "Selected tool: " + ", ".join(
                                 call["name"] for call in item.tool_calls
                             )
-                            # Never display AI content accompanying a tool request.
+                            # Do not display AI content accompanying tool requests.
                         else:
                             final_message = item
                             step.output = "Final answer"
@@ -53,5 +52,5 @@ async def on_message(message: cl.Message):
     if final_message is None:
         raise RuntimeError("Graph finished without a final assistant response.")
     cl.user_session.set("messages", messages)
-    # Only final answer content is sent; additional_kwargs/reasoning are not shown.
+    # Separate reasoning metadata is not displayed.
     await cl.Message(content=final_message.content).send()

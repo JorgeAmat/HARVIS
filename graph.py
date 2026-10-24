@@ -1,7 +1,3 @@
-# ============================================================
-# IMPORTS
-# ============================================================
-
 import ast
 import math
 
@@ -19,34 +15,15 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 
 
-# ============================================================
-# CONFIG
-# ============================================================
-
-# Carga las variables de nuestro archivo .env
 load_dotenv()
 
 
-# ============================================================
-# 1. STATE
-# ============================================================
-
+# State is the information shared by graph nodes.
 class AgentState(TypedDict):
 
-    # El state de momento solo contiene la conversación.
-    #
-    # add_messages significa:
-    #
-    # NO sustituyas los mensajes anteriores.
-    # Añade los nuevos al historial.
-    #
-    # USER -> AI -> TOOL -> AI -> ...
+    # add_messages merges new messages into history (matching IDs are updated).
     messages: Annotated[list, add_messages]
 
-
-# ============================================================
-# 2. TOOLS
-# ============================================================
 
 def evaluate_expression(expression: str) -> float:
     """Evaluate only bounded numeric arithmetic; never execute Python code."""
@@ -84,7 +61,7 @@ def evaluate_expression(expression: str) -> float:
         else:
             raise ValueError("Only numbers, parentheses, +, -, *, and / are allowed.")
 
-        # Check every intermediate value, not just the final answer.
+        # Bound every intermediate result, not just the final answer.
         if not math.isfinite(result) or abs(result) > 1e100:
             raise ValueError("Numbers and results must be finite and at most 1e100 in magnitude.")
         return result
@@ -106,17 +83,10 @@ def calculate(expression: str) -> str:
         return f"Error: {exc}"
 
 
-# Esta será la lista de capacidades disponibles para HARVIS.
-#
-# De momento solo tiene UNA.
 tools = [
     calculate
 ]
 
-
-# ============================================================
-# 3. MODEL
-# ============================================================
 
 model = ChatGroq(
     model="openai/gpt-oss-20b",
@@ -124,19 +94,10 @@ model = ChatGroq(
 )
 
 
-# bind_tools NO ejecuta herramientas.
-#
-# Simplemente informa al LLM:
-#
-# "Existe calculate y puedes solicitar que se ejecute."
+# bind_tools describes available tools; it does not execute them.
 model_with_tools = model.bind_tools(
     tools
 )
-
-
-# ============================================================
-# 4. PERSONALITY / SYSTEM PROMPT
-# ============================================================
 
 
 SYSTEM_PROMPT = """
@@ -146,6 +107,17 @@ Your goal is to help Jorge think, organize information,
 understand things and carry out useful tasks.
 
 You can use the tools available to you when necessary.
+
+CAPABILITY BOUNDARY:
+Your current capabilities are text conversation, temporary context from messages
+provided in this session, and the calculate tool. Describe these honestly when
+asked what you can do. Never claim capabilities or tools that are not available.
+You can discuss general topics using your existing knowledge and help draft text
+or plans, but discussing or suggesting an action does not mean you can perform it.
+You currently cannot search the web, access files, use persistent memory, send or
+read email, manage calendars/agendas, set reminders, or use voice. Do not claim
+these capabilities unless they are explicitly enabled and actually available.
+Never claim an external action was performed without a successful tool result.
 
 IMPORTANT TOOL RULE:
 Whenever a request requires arithmetic, you MUST use the
@@ -163,26 +135,10 @@ been provided to you or retrieved through a tool.
 """
 
 
-# ============================================================
-# 5. AGENT NODE
-# ============================================================
-
 def agent_node(state: AgentState):
 
     print("\n[GRAPH] Entrando en AGENT")
 
-    # Al modelo le pasamos:
-    #
-    # 1. Sus instrucciones generales
-    # 2. Todo el historial de mensajes
-    #
-    # Ejemplo:
-    #
-    # SYSTEM: Eres HARVIS...
-    # USER: ¿Cuánto es 23 * 8?
-    # AI: quiero usar calculate...
-    # TOOL: 184
-    #
     response = model_with_tools.invoke(
         [
             SystemMessage(content=SYSTEM_PROMPT),
@@ -200,33 +156,22 @@ def agent_node(state: AgentState):
     else:
         print("\n[AGENT] No ha solicitado ninguna tool")
 
-    # add_messages añadirá esta respuesta al historial
     return {
         "messages": [response]
     }
 
 
-# ============================================================
-# 6. TOOL NODE
-# ============================================================
-
-# Este nodo sabe ejecutar cualquiera de las tools
-# que hay dentro de "tools".
+# ToolNode executes requested tools and adds their results as ToolMessages.
 tool_node = ToolNode(
     tools
 )
 
-
-# ============================================================
-# 7. GRAPH
-# ============================================================
 
 builder = StateGraph(
     AgentState
 )
 
 
-# Registramos nuestros nodos
 builder.add_node(
     "agent",
     agent_node
@@ -238,42 +183,24 @@ builder.add_node(
 )
 
 
-# Siempre empezamos preguntando al agente.
 builder.add_edge(
     START,
     "agent"
 )
 
 
-# Después del agente:
-#
-# Si el LLM pidió una tool:
-#
-#       agent -> tools
-#
-# Si NO pidió una tool:
-#
-#       agent -> END
-#
+# tools_condition routes tool requests to tools; otherwise the graph ends.
 builder.add_conditional_edges(
     "agent",
     tools_condition
 )
 
 
-# Una vez ejecutada una herramienta:
-#
-# volvemos SIEMPRE al agente.
-#
-# Esto crea el agent loop.
+# Return tool results to the agent: agent -> tools -> agent.
 builder.add_edge(
     "tools",
     "agent"
 )
 
-
-# ============================================================
-# 8. COMPILE
-# ============================================================
 
 graph = builder.compile()

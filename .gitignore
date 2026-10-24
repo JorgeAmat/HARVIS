@@ -5,9 +5,12 @@ __pycache__/
 
 # Secrets
 .env
+.env.*
 
 # Chainlit
-.chainlit/
+.chainlit/*
+!.chainlit/config.toml
+.files/
 
 # Personal HARVIS data
 HARVIS_MEMORY/
