@@ -1,9 +1,10 @@
-# HARVIS v0.2A
+# HARVIS v0.2B
 
 HARVIS is a local conversational assistant using Groq and one restricted arithmetic
-tool, `calculate(expression)`. The terminal test persists conversation state in
-SQLite. Chainlit still keeps only temporary session context; it does not resume
-saved conversations. There is no Obsidian integration or cross-thread memory.
+tool, `calculate(expression)`. Both Chainlit and the terminal test persist
+conversation state in SQLite. Chainlit uses one fixed local thread,
+`chainlit-main`, which survives application restarts. There is no Obsidian
+integration, global personal memory, or cross-thread memory.
 
 ## Architecture
 
@@ -11,7 +12,8 @@ saved conversations. There is no Obsidian integration or cross-thread memory.
 Chainlit -> LangGraph -> Groq -> Tools
 ```
 
-- `app.py`: Chainlit UI, temporary chat history, and agent/tool execution steps.
+- `app.py`: Chainlit UI, active thread ID, and agent/tool execution steps.
+  LangGraph owns message history; the UI sends only each new user message.
 - `graph.py`: agent brain, message state, Groq model, calculation tool, and routing.
 - `main.py`: independent SQLite persistence test without the UI.
 - `tests/`: offline arithmetic, routing, UI-output, and SQLite persistence tests.
@@ -64,7 +66,7 @@ is private, unencrypted, and ignored by Git; keep the database local and trusted
 This milestone tests completed turns; unfinished runs are reported, not resumed
 automatically by the terminal test.
 
-Launch the unchanged, session-only UI locally:
+Launch the persistent UI locally:
 
 ```powershell
 python -X utf8 -m chainlit run app.py --headless --host 127.0.0.1 --port 8000
@@ -73,6 +75,36 @@ python -X utf8 -m chainlit run app.py --headless --host 127.0.0.1 --port 8000
 Open http://127.0.0.1:8000. Stop with Ctrl+C. File uploads and MCP are disabled.
 Try: "Tengo 73 acciones a 181.4 euros. El precio sube un 15%. ¿Cuánto vale mi posición?"
 Inspect the Agent and Tool steps; the result should be approximately 15,228.53 euros.
+
+## Chainlit restart test
+
+1. Start Chainlit with the command above and open http://127.0.0.1:8000.
+2. Say: "Mi animal de prueba es el koala." Wait for the answer to finish.
+3. Stop the server completely with Ctrl+C.
+4. Run the same launch command again and reopen the page.
+5. Ask: "¿Cuál era mi animal de prueba?" HARVIS should answer "koala".
+
+Chainlit stores only `thread_id` in its user session. Each turn opens the existing
+persistent graph and submits only the new message with that thread ID. SQLite
+restores and checkpoints the history; agent/tool steps stay visible.
+
+All local UI chats intentionally use `chainlit-main`. The New Chat button also
+continues that same conversation. Old messages are not replayed in the UI, but
+their context is available to the agent. There is no conversation selector yet;
+use this milestone as one local conversation, not independent concurrent chats.
+
+Print the database path from the repository folder:
+
+```powershell
+python -c "from graph import CHECKPOINT_PATH; print(CHECKPOINT_PATH)"
+```
+
+It should be `C:\Users\jorge\Desktop\HARVIS\data\checkpoints.sqlite`.
+To inspect the file without reading conversation contents:
+
+```powershell
+Get-Item .\data\checkpoints.sqlite | Select-Object FullName, Length, LastWriteTime
+```
 
 ## Checks
 

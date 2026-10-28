@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -53,7 +55,7 @@ class GraphAndUITests(unittest.IsolatedAsyncioTestCase):
             return next(outputs)
 
         steps, sent = [], []
-        session = {"messages": []}
+        session = {"thread_id": "chainlit-main"}
 
         class Step:
             def __init__(self, **kwargs):
@@ -72,7 +74,10 @@ class GraphAndUITests(unittest.IsolatedAsyncioTestCase):
                 sent.append(self.content)
 
         fake_session = SimpleNamespace(get=session.get, set=session.__setitem__)
-        with patch.object(brain, "model_with_tools") as model, \
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(app, "open_persistent_graph",
+                          lambda: brain.open_persistent_graph(Path(directory) / "test.sqlite")), \
+             patch.object(brain, "model_with_tools") as model, \
              patch.object(app.cl, "Step", Step), \
              patch.object(app.cl, "Message", Message), \
              patch.object(app.cl, "user_session", fake_session):
@@ -85,7 +90,7 @@ class GraphAndUITests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(float(steps[1].output), 15228.53)
         self.assertEqual(sent, ["Result: 15228.53"])
         self.assertIsInstance(observations[1][-1], ToolMessage)
-        self.assertEqual(len(session["messages"]), 4)
+        self.assertEqual(session, {"thread_id": "chainlit-main"})
         visible = str([(s.input, s.output) for s in steps]) + str(sent)
         self.assertNotIn("PRIVATE", visible)
 

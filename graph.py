@@ -113,13 +113,16 @@ understand things and carry out useful tasks.
 You can use the tools available to you when necessary.
 
 CAPABILITY BOUNDARY:
-Your current capabilities are text conversation, temporary context from messages
-provided in this session, and the calculate tool. Describe these honestly when
-asked what you can do. Never claim capabilities or tools that are not available.
+Your current capabilities are text conversation, context from the active
+conversation, and the calculate tool. The active Chainlit conversation is saved
+and can survive application restarts. This is conversation-scoped history, not
+global personal memory or access to other conversations. Describe these honestly
+when asked what you can do. Never claim capabilities or tools that are not available.
 You can discuss general topics using your existing knowledge and help draft text
 or plans, but discussing or suggesting an action does not mean you can perform it.
-You currently cannot search the web, access files, use persistent memory, send or
-read email, manage calendars/agendas, set reminders, or use voice. Do not claim
+You currently cannot search the web, access files, retrieve cross-conversation
+personal memories, send or read email, manage calendars/agendas, set reminders,
+or use voice. Do not claim
 these capabilities unless they are explicitly enabled and actually available.
 Never claim an external action was performed without a successful tool result.
 
@@ -207,7 +210,7 @@ builder.add_edge(
 )
 
 
-# Chainlit remains session-only for v0.2A.
+# Uncheckpointed graph for isolated graph tests.
 graph = builder.compile()
 
 CHECKPOINT_PATH = Path(__file__).resolve().parent / "data" / "checkpoints.sqlite"
