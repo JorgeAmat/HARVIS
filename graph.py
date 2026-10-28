@@ -1,5 +1,7 @@
 import ast
 import math
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 from typing import Annotated, TypedDict
 
@@ -10,6 +12,8 @@ from langchain_core.tools import tool
 
 from langchain_groq import ChatGroq
 
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import StateGraph, START
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -203,4 +207,17 @@ builder.add_edge(
 )
 
 
+# Chainlit remains session-only for v0.2A.
 graph = builder.compile()
+
+CHECKPOINT_PATH = Path(__file__).resolve().parent / "data" / "checkpoints.sqlite"
+
+
+@asynccontextmanager
+async def open_persistent_graph(database_path: Path = CHECKPOINT_PATH):
+    """Keep the SQLite connection open for all graph operations in this context."""
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    async with AsyncSqliteSaver.from_conn_string(str(database_path)) as checkpointer:
+        # Restrict checkpoint decoding to the serializer's built-in safe types.
+        checkpointer.serde = JsonPlusSerializer(allowed_msgpack_modules=None)
+        yield builder.compile(checkpointer=checkpointer)

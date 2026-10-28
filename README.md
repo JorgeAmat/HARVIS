@@ -1,8 +1,9 @@
-# HARVIS v0.1.1
+# HARVIS v0.2A
 
 HARVIS is a local conversational assistant using Groq and one restricted arithmetic
-tool, `calculate(expression)`. Conversation context lasts only for the current
-server session; there is no persistent memory or Obsidian integration.
+tool, `calculate(expression)`. The terminal test persists conversation state in
+SQLite. Chainlit still keeps only temporary session context; it does not resume
+saved conversations. There is no Obsidian integration or cross-thread memory.
 
 ## Architecture
 
@@ -12,8 +13,8 @@ Chainlit -> LangGraph -> Groq -> Tools
 
 - `app.py`: Chainlit UI, temporary chat history, and agent/tool execution steps.
 - `graph.py`: agent brain, message state, Groq model, calculation tool, and routing.
-- `main.py`: independent local graph test without the UI.
-- `tests/test_harvis.py`: offline arithmetic, routing, and UI-output tests.
+- `main.py`: independent SQLite persistence test without the UI.
+- `tests/`: offline arithmetic, routing, UI-output, and SQLite persistence tests.
 
 The graph loops from agent to tools and back to agent until it produces an answer.
 Only tool selections, arguments, results, and final answers are displayed.
@@ -47,10 +48,23 @@ The model is configured in `graph.py` as `openai/gpt-oss-20b`.
 Test the graph independently (requires internet and a valid key):
 
 ```powershell
-python -X utf8 main.py
+python -X utf8 main.py jorge-test "My secret project codeword is blue lantern."
+python -X utf8 main.py jorge-test "What project codeword did I give you?"
+python -X utf8 main.py another-thread "What project codeword did I give you?"
 ```
 
-Launch the UI locally:
+Each command starts a separate Python process. Reusing a thread ID restores its
+history; a new ID starts isolated state. Send only the new message each time.
+Choose a fresh ID for a clean test: existing IDs retain earlier runs.
+
+`data/checkpoints.sqlite` is resolved relative to `graph.py`, regardless of the
+terminal working directory. The async saver opens the connection, checkpoints
+the existing graph, and closes the connection on exit. Stored conversation data
+is private, unencrypted, and ignored by Git; keep the database local and trusted.
+This milestone tests completed turns; unfinished runs are reported, not resumed
+automatically by the terminal test.
+
+Launch the unchanged, session-only UI locally:
 
 ```powershell
 python -X utf8 -m chainlit run app.py --headless --host 127.0.0.1 --port 8000
