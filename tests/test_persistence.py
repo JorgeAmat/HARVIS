@@ -78,6 +78,9 @@ async def run():
          patch.object(brain, "model_with_tools") as model:
         model.invoke.side_effect = reply
         await app.on_chat_start()
+        if sys.argv[4]:
+            await app.on_message(SimpleNamespace(content="/resume " + sys.argv[4]))
+            model.invoke.assert_not_called()
         await app.on_message(SimpleNamespace(content=sys.argv[3]))
     async with brain.open_persistent_graph(Path(sys.argv[2])) as graph:
         state = await graph.aget_state({"configurable": {"thread_id": session["thread_id"]}})
@@ -125,10 +128,10 @@ class PersistenceTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "ui-test.sqlite"
 
-            def ui_turn(message):
+            def ui_turn(message, resume_id=""):
                 result = subprocess.run(
                     [sys.executable, "-X", "utf8", "-B", "-c", UI_WORKER,
-                     str(project), str(database), message],
+                     str(project), str(database), message, resume_id],
                     cwd=directory, capture_output=True, text=True,
                     encoding="utf-8", timeout=30,
                 )
@@ -136,8 +139,8 @@ class PersistenceTests(unittest.IsolatedAsyncioTestCase):
                 return json.loads(result.stdout.splitlines()[-1])
 
             first = ui_turn("Mi animal de prueba es el koala.")
-            second = ui_turn("¿Cuál era mi animal de prueba?")
-            self.assertEqual(first["session"], {"thread_id": "chainlit-main"})
+            second = ui_turn("¿Cuál era mi animal de prueba?", first["session"]["thread_id"])
+            self.assertEqual(set(first["session"]), {"thread_id"})
             self.assertEqual(second["session"], first["session"])
             self.assertEqual(second["final"], "koala")
             self.assertEqual(second["seen"], ["Mi animal de prueba es el koala.",

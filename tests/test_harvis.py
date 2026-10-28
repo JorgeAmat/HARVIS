@@ -2,13 +2,14 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import uuid
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Offline tests must not depend on a real API key or send model requests.
 os.environ.setdefault("GROQ_API_KEY", "offline-test-key")
 
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 import graph as brain
 import app
 
@@ -55,7 +56,8 @@ class GraphAndUITests(unittest.IsolatedAsyncioTestCase):
             return next(outputs)
 
         steps, sent = [], []
-        session = {"thread_id": "chainlit-main"}
+        session = {"thread_id": str(uuid.uuid4())}
+        active_thread = session["thread_id"]
 
         class Step:
             def __init__(self, **kwargs):
@@ -90,9 +92,89 @@ class GraphAndUITests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(float(steps[1].output), 15228.53)
         self.assertEqual(sent, ["Result: 15228.53"])
         self.assertIsInstance(observations[1][-1], ToolMessage)
-        self.assertEqual(session, {"thread_id": "chainlit-main"})
+        self.assertEqual(session, {"thread_id": active_thread})
         visible = str([(s.input, s.output) for s in steps]) + str(sent)
         self.assertNotIn("PRIVATE", visible)
+
+    async def test_new_chats_are_isolated_and_resume_only_selects_state(self):
+        session, sent = {}, []
+        fake_session = SimpleNamespace(get=session.get, set=session.__setitem__)
+        step = MagicMock()
+        step.__aenter__.return_value = step
+
+        def ui_message(content):
+            sent.append(content)
+            return SimpleNamespace(send=AsyncMock())
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "ui.sqlite"
+
+            async def saved(thread_id):
+                async with brain.open_persistent_graph(database) as graph:
+                    return await graph.aget_state({"configurable": {"thread_id": thread_id}})
+
+            with patch.object(app, "open_persistent_graph", lambda: brain.open_persistent_graph(database)), \
+                 patch.object(app.cl, "user_session", fake_session), \
+                 patch.object(app.cl, "Message", side_effect=ui_message), \
+                 patch.object(app.cl, "Step", return_value=step), \
+                 patch.object(brain, "model_with_tools") as model, \
+                 patch.object(brain.tool_node, "ainvoke") as tools:
+                model.invoke.side_effect = lambda messages: AIMessage(content="OK")
+
+                await app.on_chat_start()
+                thread_a = session["thread_id"]
+                self.assertEqual(str(uuid.UUID(thread_a)), thread_a)
+                self.assertIn(thread_a, sent[-1])
+                self.assertIsNone((await saved(thread_a)).created_at)
+                model.invoke.assert_not_called()
+                await app.on_message(SimpleNamespace(content="My test animal is koala."))
+
+                await app.on_chat_start()
+                thread_b = session["thread_id"]
+                self.assertNotEqual(thread_a, thread_b)
+                self.assertEqual(str(uuid.UUID(thread_b)), thread_b)
+                self.assertIn(thread_b, sent[-1])
+                await app.on_message(SimpleNamespace(content="My test animal is panda."))
+                model_input = model.invoke.call_args.args[0]
+                self.assertNotIn("koala", str([m.content for m in model_input]))
+                state_a, state_b = await saved(thread_a), await saved(thread_b)
+                self.assertEqual(len(state_a.values["messages"]), 2)
+                self.assertEqual(len(state_b.values["messages"]), 2)
+
+                # Successful resume reads state without invoking the model or tools.
+                model.invoke.reset_mock()
+                await app.on_message(SimpleNamespace(content=f"/resume {thread_a}"))
+                self.assertEqual(session, {"thread_id": thread_a})
+                self.assertIn(f"Resumed conversation: {thread_a}", sent[-1])
+                model.invoke.assert_not_called()
+                tools.assert_not_called()
+                self.assertEqual([m.id for m in (await saved(thread_a)).values["messages"]],
+                                 [m.id for m in state_a.values["messages"]])
+
+                unknown = str(uuid.uuid4())
+                await app.on_message(SimpleNamespace(content=f"/resume {unknown}"))
+                self.assertEqual(session, {"thread_id": thread_a})
+                self.assertIn("Conversation not found", sent[-1])
+                self.assertIsNone((await saved(unknown)).created_at)
+                for command in ("/resume", f"/resume {thread_b} extra"):
+                    await app.on_message(SimpleNamespace(content=command))
+                    self.assertEqual(session, {"thread_id": thread_a})
+                    self.assertIn("Usage:", sent[-1])
+                model.invoke.assert_not_called()
+                tools.assert_not_called()
+
+                await app.on_message(SimpleNamespace(content="Which animal did I mention?"))
+                user_messages = [m.content for m in model.invoke.call_args.args[0]
+                                 if isinstance(m, HumanMessage)]
+                self.assertEqual(user_messages, ["My test animal is koala.",
+                                                  "Which animal did I mention?"])
+                restored = (await saved(thread_a)).values["messages"]
+                self.assertEqual(len(restored), 4)
+                self.assertEqual(len({m.id for m in restored}), 4)
+                self.assertEqual([m.id for m in restored[:2]],
+                                 [m.id for m in state_a.values["messages"]])
+                self.assertEqual([m.id for m in (await saved(thread_b)).values["messages"]],
+                                 [m.id for m in state_b.values["messages"]])
 
     async def test_plain_answer_without_tools(self):
         with patch.object(brain, "model_with_tools") as model:

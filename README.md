@@ -1,9 +1,9 @@
-# HARVIS v0.2B
+# HARVIS v0.2C
 
 HARVIS is a local conversational assistant using Groq and one restricted arithmetic
 tool, `calculate(expression)`. Both Chainlit and the terminal test persist
-conversation state in SQLite. Chainlit uses one fixed local thread,
-`chainlit-main`, which survives application restarts. There is no Obsidian
+conversation state in SQLite. Each new Chainlit chat gets its own UUID; use
+`/resume <thread_id>` to continue a saved conversation after restarting. There is no Obsidian
 integration, global personal memory, or cross-thread memory.
 
 ## Architecture
@@ -76,22 +76,35 @@ Open http://127.0.0.1:8000. Stop with Ctrl+C. File uploads and MCP are disabled.
 Try: "Tengo 73 acciones a 181.4 euros. El precio sube un 15%. ¿Cuánto vale mi posición?"
 Inspect the Agent and Tool steps; the result should be approximately 15,228.53 euros.
 
-## Chainlit restart test
+## New chats and resuming saved conversations
 
-1. Start Chainlit with the command above and open http://127.0.0.1:8000.
-2. Say: "Mi animal de prueba es el koala." Wait for the answer to finish.
-3. Stop the server completely with Ctrl+C.
-4. Run the same launch command again and reopen the page.
-5. Ask: "¿Cuál era mi animal de prueba?" HARVIS should answer "koala".
+Every new chat displays `HARVIS v0.2C online` and a fresh **Conversation ID**.
+Copy that ID if you want to resume later. A UUID is selected immediately; its
+conversation becomes saved once you send a normal message.
 
-Chainlit stores only `thread_id` in its user session. Each turn opens the existing
-persistent graph and submits only the new message with that thread ID. SQLite
-restores and checkpoints the history; agent/tool steps stay visible.
+1. Start Chainlit, open http://127.0.0.1:8000, and copy conversation A's ID.
+2. Say: "Mi animal de prueba es el koala." Wait for the response to finish.
+3. Click New Chat. Conversation B must have a different ID.
+4. Ask: "¿Cuál era mi animal de prueba?" It should not know A's animal.
+5. Send `/resume <A's ID>` (replace the placeholder with the copied ID).
+6. After the confirmation, ask again. HARVIS should answer "koala".
+7. Stop the server with Ctrl+C, restart it, and open a new chat.
+8. Send `/resume <A's ID>` again, then ask the animal question to verify recovery.
 
-All local UI chats intentionally use `chainlit-main`. The New Chat button also
-continues that same conversation. Old messages are not replayed in the UI, but
-their context is available to the agent. There is no conversation selector yet;
-use this milestone as one local conversation, not independent concurrent chats.
+`/resume` reads LangGraph state and switches only if a saved checkpoint exists.
+It does not call Groq, execute tools, replay the old transcript, or add the command
+to conversation history. An unknown ID or malformed command leaves the active
+conversation unchanged. IDs need not be UUIDs for resume: old saved conversations
+such as `chainlit-main` remain accessible with `/resume chainlit-main`.
+
+To test a missing ID, use `/resume 00000000-0000-0000-0000-000000000000` (assuming
+you have never used that ID). Expect a clear error, with the active thread unchanged.
+Sending `/resume` without an ID should display the command's usage.
+
+Chainlit stores only the active `thread_id` in its user session. Normal turns send
+only the new message; LangGraph restores and saves history in SQLite. Agent/tool
+steps stay visible. This remains a local app; thread IDs select conversations and
+are not user authentication or an access-control system.
 
 Print the database path from the repository folder:
 

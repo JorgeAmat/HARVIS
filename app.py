@@ -1,4 +1,5 @@
 import json
+import uuid
 
 import chainlit as cl
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -8,13 +9,28 @@ from graph import open_persistent_graph
 
 @cl.on_chat_start
 async def on_chat_start():
-    # One stable local conversation; even a new UI chat reuses this thread.
-    cl.user_session.set("thread_id", "chainlit-main")
-    await cl.Message(content="HARVIS v0.2B online.\n\nContinuamos la conversación guardada.").send()
+    thread_id = str(uuid.uuid4())
+    cl.user_session.set("thread_id", thread_id)
+    await cl.Message(content=f"HARVIS v0.2C online.\n\nConversation ID: {thread_id}").send()
 
 
 @cl.on_message
 async def on_message(message: cl.Message):
+    command = message.content.strip().split()
+    if command and command[0] == "/resume":
+        if len(command) != 2:
+            await cl.Message(content="Usage: /resume <thread_id>").send()
+            return
+        thread_id = command[1]
+        async with open_persistent_graph() as graph:
+            state = await graph.aget_state({"configurable": {"thread_id": thread_id}})
+        if state.created_at is None:
+            await cl.Message(content=f"Conversation not found: {thread_id}. Active conversation unchanged.").send()
+            return
+        cl.user_session.set("thread_id", thread_id)
+        await cl.Message(content=f"Resumed conversation: {thread_id}").send()
+        return
+
     config = {"configurable": {"thread_id": cl.user_session.get("thread_id")}}
     tool_calls = {}
     final_message = None
