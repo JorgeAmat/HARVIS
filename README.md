@@ -1,7 +1,8 @@
-# HARVIS v0.2C
+# HARVIS v0.3A.1
 
 HARVIS is a local conversational assistant using Groq and one restricted arithmetic
-tool, `calculate(expression)`. Both Chainlit and the terminal test persist
+tool, `calculate(expression)`. Chainlit accepts typed text or microphone speech
+transcribed by Groq Whisper; replies remain text-only. Both interfaces persist
 conversation state in SQLite. Each new Chainlit chat gets its own UUID; use
 `/resume <thread_id>` to continue a saved conversation after restarting. There is no Obsidian
 integration, global personal memory, or cross-thread memory.
@@ -78,7 +79,7 @@ Inspect the Agent and Tool steps; the result should be approximately 15,228.53 e
 
 ## New chats and resuming saved conversations
 
-Every new chat displays `HARVIS v0.2C online` and a fresh **Conversation ID**.
+Every new chat displays `HARVIS v0.3A.1 online` and a fresh **Conversation ID**.
 Copy that ID if you want to resume later. A UUID is selected immediately; its
 conversation becomes saved once you send a normal message.
 
@@ -101,7 +102,8 @@ To test a missing ID, use `/resume 00000000-0000-0000-0000-000000000000` (assumi
 you have never used that ID). Expect a clear error, with the active thread unchanged.
 Sending `/resume` without an ID should display the command's usage.
 
-Chainlit stores only the active `thread_id` in its user session. Normal turns send
+Chainlit stores the active `thread_id` and temporary audio recording state in its
+user session, never full message history. Normal turns send
 only the new message; LangGraph restores and saves history in SQLite. Agent/tool
 steps stay visible. This remains a local app; thread IDs select conversations and
 are not user authentication or an access-control system.
@@ -118,6 +120,51 @@ To inspect the file without reading conversation contents:
 ```powershell
 Get-Item .\data\checkpoints.sqlite | Select-Object FullName, Length, LastWriteTime
 ```
+
+## Microphone input (v0.3A.1)
+
+Open the local Chainlit UI and allow microphone access. Press the microphone
+control and speak a short message. A small panel displays **Recording...** with
+**X Cancel** and **✓ Finish / Send**. Cancel immediately clears audio locally and
+stops without a Groq request or agent turn. Finish explicitly approves upload,
+then stops recording and transcribes once. The native Chainlit X and P shortcut
+discard recordings unless Finish has explicitly approved sending first.
+Leave a brief pause after your final word before Finish: Chainlit batches samples.
+The panel waits for Python to acknowledge its recording-specific decision before
+stopping through Chainlit's audio API, then disappears. It does not replace the
+native composer control or use DOM selectors. Old panel IDs cannot affect a new
+recording. HARVIS uploads only explicitly approved recordings to Groq `whisper-large-v3-turbo`, displays
+the transcript as "You (transcribed)", and runs the same persistent agent used
+for typed text. Language is detected automatically. Responses are text-only.
+
+Recordings are limited to 60 seconds of mono PCM16 at 24,000 Hz. Audio is held
+temporarily in RAM by HARVIS and wrapped as WAV in memory, never deliberately
+written to disk or SQLite. Your voice and any recorded background speech are sent
+to Groq for transcription. The transcript becomes a normal, persistent message
+in the thread selected when recording started. That transcript and conversation
+context are then sent to Groq's chat model. Buffer cleanup is not a guarantee
+about Groq's retention of submitted audio.
+
+Typed `/resume` remains a UI command; a spoken transcript containing `/resume`
+is ordinary agent input and does not switch threads. Empty/invalid/oversized
+recordings, empty transcripts, and transcription API failures produce an error
+without invoking the agent. Finish one recording and response before starting
+another. There is no text-to-speech, VAD, or realtime transcription.
+
+Manual check:
+
+1. Start a new chat and copy its conversation ID.
+2. Record: "Mi animal de prueba es el koala." Click **✓ Finish / Send** and check the transcript.
+3. Type: "¿Cuál era mi animal de prueba?" Expect "koala".
+4. Record a short arithmetic request, click Finish, and inspect the Agent/Tool steps.
+   Record another phrase and click Cancel: no transcript or agent steps should appear.
+   Repeat using the native X or P shortcut outside the text input: it should discard.
+5. Start a new chat and verify it does not inherit the animal.
+6. Type `/resume <original ID>`, then ask the animal question by microphone.
+7. Restart Chainlit, resume the same ID, and verify the transcribed fact persists.
+8. Test an empty/very short recording and denied microphone permission. No
+   successful transcription should mean no agent turn. Also check your final
+   spoken words are present in the transcript.
 
 ## Checks
 
